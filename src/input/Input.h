@@ -66,6 +66,7 @@
 #include "tasks/VirtualOrbitalSpaceSelectionTask.h"
 #include "tasks/WavefunctionEmbeddingTask.h"
 #include "tasks/WriteIntegralsTask.h"
+#include "tasks/WriteDataTask.h"
 /* Include Std and External Headers */
 #include <sstream>
 
@@ -560,6 +561,12 @@ class Input {
         }
         else if (!copy.compare("INT") or !copy.compare("WRITEINTS") or !copy.compare("INTEGRALS")) {
           auto taskptr = new WriteIntegralsTask(activeSystem[0]);
+          if (!defaultSettings)
+            Input::parseTaskSettings(taskptr, settingsStream);
+          task.reset(taskptr);
+        }
+        else if (!copy.compare("SAVEDATA")) {
+          auto taskptr = new WriteDataTask(activeSystem[0]);
           if (!defaultSettings)
             Input::parseTaskSettings(taskptr, settingsStream);
           task.reset(taskptr);

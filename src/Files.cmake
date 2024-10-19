@@ -336,6 +336,7 @@ set(SERENITY_CPPS
   ${PROJECT_SOURCE_DIR}/src/tasks/VirtualOrbitalSpaceSelectionTask.cpp
   ${PROJECT_SOURCE_DIR}/src/tasks/WavefunctionEmbeddingTask.cpp
   ${PROJECT_SOURCE_DIR}/src/tasks/WriteIntegralsTask.cpp
+  ${PROJECT_SOURCE_DIR}/src/tasks/WriteDataTask.cpp  
 )
 
 set(SERENITY_HEADERS
@@ -721,6 +722,7 @@ set(SERENITY_HEADERS
   ${PROJECT_SOURCE_DIR}/src/tasks/VirtualOrbitalSpaceSelectionTask.h
   ${PROJECT_SOURCE_DIR}/src/tasks/WavefunctionEmbeddingTask.h
   ${PROJECT_SOURCE_DIR}/src/tasks/WriteIntegralsTask.h
+  ${PROJECT_SOURCE_DIR}/src/tasks/WriteDataTask.h  
 )
 
 set(SERENITY_PYTHON_FILES
