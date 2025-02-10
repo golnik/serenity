@@ -25,13 +25,30 @@
 /* Include Std and External Headers */
 #include <memory>
 
+#include "data/OrbitalController.h"
+#include "data/ElectronicStructure.h"
+
+#include "math/Matrix.h"
+#include "math/RegularRankFourTensor.h"
+
 namespace Serenity {
+
+#define RSCF Options::SCF_MODES::RESTRICTED
+
 /* Forward declarations */
 class SystemController;
+class BasisController;
 
 struct WriteDataTaskSettings {
-  WriteDataTaskSettings() : dummy(false){};
-  REFLECTABLE((bool)dummy)
+  WriteDataTaskSettings() : 
+  fname("data.hdf5"),
+  activeOrbs({}),
+  eriThreshold(-1){};
+  REFLECTABLE(
+    (std::string)fname,
+    (std::vector<unsigned int>)activeOrbs,
+    (double)eriThreshold
+  )
 };
 
 /**
@@ -60,6 +77,15 @@ class WriteDataTask : public Task {
 
  private:
   std::shared_ptr<SystemController> _system;
+  std::shared_ptr<BasisController> _basis;
+  std::shared_ptr<OrbitalController<RSCF>> _orbitals;
+  std::shared_ptr<ElectronicStructure<RSCF>> _elstruct;
+
+  std::unique_ptr<Eigen::MatrixXd> _coeffs;
+  std::unique_ptr<RegularRankFourTensor<double>> _eris;
+
+  void prepCoefficients(Eigen::VectorXd& coeffs);
+  void prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXd& indices);
 };
 
 } /* namespace Serenity */
