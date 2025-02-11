@@ -84,6 +84,12 @@ class WriteDataTask : public Task {
   std::unique_ptr<Eigen::MatrixXd> _coeffs;
   std::unique_ptr<RegularRankFourTensor<double>> _eris;
 
+  unsigned int _nBasisFunc;   //number of basis functions
+  unsigned int _nActOrbs;     //number of active orbitals to save
+  unsigned int _nOccActOrbs;  //number of occupied active orbitals
+  unsigned int _iActOrb;      //index of initial active orbital
+  unsigned int _fActOrb;      //index of final active orbital
+
   void prepCoefficients(Eigen::VectorXd& coeffs);
   void prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXd& indices);
 };

@@ -54,24 +54,44 @@ void WriteDataTask::run() {
   OutputControl::n.printf(
     "  This module will save orbital energies, coefficients, and molecular integrals to hdf5 file.\n\n");
 
-  if(settings.activeOrbs.size() == 0){//default active space - all orbitals
+  _nBasisFunc = _basis->getNBasisFunctions();
+  const unsigned int nOccOrb = _system->getNOccupiedOrbitals<RSCF>();
 
-  }
-  else if(settings.activeOrbs.size() == 2){//initial and final orbitals are specified
+  //default active space settings
+  _nActOrbs = _nBasisFunc;
+  _iActOrb = 0;
+  _fActOrb = _nBasisFunc-1;
+  _nOccActOrbs = nOccOrb;
 
+  if(!settings.activeOrbs.empty() && settings.activeOrbs.size() == 2){//initial and final orbitals are specified
+    _iActOrb = settings.activeOrbs[0]-1;
+    _fActOrb = settings.activeOrbs[1]-1;
+    if(_iActOrb>=_fActOrb){
+      throw SerenityError(
+        "SAVEDATA task: Wrong active space is requested.\n"
+        "               Index of the initial orbital must be lower than that of the final orbital!");
+    }
+    if(_iActOrb>=_nBasisFunc || _fActOrb>=_nBasisFunc){
+        throw SerenityError(
+          "SAVEDATA task: Wrong active space is requested.\n"
+          "               Index of the initial or final orbitals must be lower than the size of the basis!");
+    }
+    if(_iActOrb>=nOccOrb){
+        throw SerenityError(
+          "SAVEDATA task: Wrong active space is requested.\n"
+          "               Index of the initial orbital must be in the occupied space!");
+    }
+    if(_fActOrb<=nOccOrb){
+        throw SerenityError(
+          "SAVEDATA task: Wrong active space is requested.\n"
+          "               Index of the final orbital must be in the virtual space!");
+    }    
+    _nActOrbs = _fActOrb - _iActOrb + 1;
+    _nOccActOrbs = nOccOrb - _iActOrb;
   }
   else{
-    throw SerenityError("SAVEDATA task: Wrong syntax in activeOrbs keyword.");
-  }
-  
-
-  //some info
-  //unsigned int OrbitalIn=
-
-  //extract information about the system
-  const unsigned int nBasisFunc = _basis->getNBasisFunctions();
-  const unsigned int nOccOrb = _system->getNOccupiedOrbitals<RSCF>();
-  const double energy = _elstruct->getEnergy();
+    throw SerenityError("SAVEDATA task: Wrong syntax in activeOrbs keyword. Use {i f}.");
+  }  
 
   //const std::string baseName = "data";
   //const std::string fileName = _system->getSystemName() + "." + baseName + ".hdf5";
@@ -81,19 +101,22 @@ void WriteDataTask::run() {
   //create hdf5 file stream
   HDF5::H5File file(fileName.c_str(), H5F_ACC_TRUNC);
 
+  //extract information about the system  
+  const double energy = _elstruct->getEnergy();
+
   //write orbital energies
   OutputControl::nOut << "  Saving orbital energies..." << std::endl;
   const auto& orbitalEnergies = _orbitals->getEigenvalues();
-  HDF5::save(file, "energies", orbitalEnergies);
+  HDF5::save(file, "energies", orbitalEnergies.segment(_iActOrb,_fActOrb));
 
   //write orbital irreps
   OutputControl::nOut << "  Saving orbital symmetries..." << std::endl;
-  Eigen::VectorXi irreps(nBasisFunc,1);//symmetry is not implemented in serenity, thus fill with ones
+  Eigen::VectorXi irreps(_nActOrbs,1);//symmetry is not implemented in serenity, thus fill with ones
   HDF5::save(file, "irreps", irreps);
 
   //write orbital coefficients
   OutputControl::nOut << "  Saving orbital coefficients..." << std::endl;
-  Eigen::VectorXd coeffs;
+  Eigen::VectorXd coeffs(_nActOrbs*_nBasisFunc);
   this->prepCoefficients(coeffs);
   HDF5::save(file, "coefficients", coeffs);
 
@@ -107,16 +130,18 @@ void WriteDataTask::run() {
   const unsigned int nIntegrals = integrals.size();
 
   OutputControl::nOut << "\n" << std::endl;
-  OutputControl::nOut << "  Size of the orbital basis: "<<nBasisFunc<< std::endl;
-  OutputControl::nOut << "  Number of occupied orbitals: "<<nOccOrb<< std::endl;
-  OutputControl::nOut << "  Total energy: "<<energy<< std::endl;
+  OutputControl::nOut << "  Total energy: "<<energy<< std::endl;  
+  OutputControl::nOut << "  Active orbitals: "<<_iActOrb+1<<"..."<<_fActOrb+1<< std::endl;
+  OutputControl::nOut << "  Number of active orbitals: "<<_nActOrbs<< std::endl;
+  OutputControl::nOut << "  Number of occupied orbitals: "<<_nOccActOrbs<< std::endl;
   OutputControl::nOut << "  Number of non-zero integrals: "<<nIntegrals<< std::endl;
 
-  HDF5::save_scalar_attribute(file, "nBasisFunc", nBasisFunc);
-  HDF5::save_scalar_attribute(file, "nOccOrb", nOccOrb);
+  HDF5::save_scalar_attribute(file, "nSym", 1);                         //number of irreps (1 in serenity)
+  HDF5::save_scalar_attribute(file, "nCenters", _system->getNAtoms());  //number of atoms
+  HDF5::save_scalar_attribute(file, "nBasisFunc", _nActOrbs);
+  HDF5::save_scalar_attribute(file, "nOccOrb", _nOccActOrbs);
   HDF5::save_scalar_attribute(file, "energy", energy);
   HDF5::save_scalar_attribute(file, "nIntegrals", nIntegrals);
-
 
   file.close();
 
@@ -128,14 +153,18 @@ void WriteDataTask::run() {
 }
 
 void WriteDataTask::prepCoefficients(Eigen::VectorXd& coeffs){
-  coeffs = *_coeffs;
+  for (unsigned int i = _iActOrb; i < _fActOrb; ++i) {
+    for (unsigned int j = 0; j < _nBasisFunc; ++j) {
+      unsigned int i_ = i - _iActOrb; //shifted orbital index to account for active space selection
+      coeffs(i_ * _nBasisFunc + j) = (*_coeffs)(i,j);
+    }
+  }
   return;
 }
 
 void WriteDataTask::prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXd& indices){
-  const unsigned int nBasisFunc = _basis->getNBasisFunctions();
   if (!_eris) {
-    _eris = std::unique_ptr<RegularRankFourTensor<double>>(new RegularRankFourTensor<double>(nBasisFunc, 0.0));
+    _eris = std::unique_ptr<RegularRankFourTensor<double>>(new RegularRankFourTensor<double>(_nBasisFunc, 0.0));
   }
   auto& eris = *_eris;
 
@@ -158,22 +187,23 @@ void WriteDataTask::prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXd& indice
 
   Ao2MoTransformer ao2mo(_basis);
 
-  ao2mo.transformTwoElectronIntegrals(eris, eris, *_coeffs, nBasisFunc);
+  //TODO: it makes sense to rewrite the AO2MO transformation routine to perform it only for active orbitals
+  ao2mo.transformTwoElectronIntegrals(eris, eris, *_coeffs, _nBasisFunc);
 
   std::vector<double> ints;
   std::vector<double> indx;
 
-  for (unsigned int i = 0; i < nBasisFunc; ++i) {
-    for (unsigned int j = i; j < nBasisFunc; ++j) {
-      for (unsigned int k = i; k < nBasisFunc; ++k) {
-        for (unsigned int l = k; l < nBasisFunc; ++l) {
+  for (unsigned int i = _iActOrb; i < _fActOrb; ++i) {
+    for (unsigned int j = i; j < _fActOrb; ++j) {
+      for (unsigned int k = i; k < _fActOrb; ++k) {
+        for (unsigned int l = k; l < _fActOrb; ++l) {
           double val=eris(i,j,k,l);
           if(fabs(val) >= settings.eriThreshold){
             ints.push_back(val);
-            indx.push_back(i);
-            indx.push_back(j);
-            indx.push_back(k);
-            indx.push_back(l);
+            indx.push_back(i-_iActOrb);
+            indx.push_back(j-_iActOrb);
+            indx.push_back(k-_iActOrb);
+            indx.push_back(l-_iActOrb);
           }
         }
       }
