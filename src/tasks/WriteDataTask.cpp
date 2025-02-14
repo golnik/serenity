@@ -37,6 +37,8 @@
 #include "io/FormattedOutput.h"
 #include "math/RegularRankFourTensor.h"
 #include "system/SystemController.h"
+#include "geometry/Geometry.h"
+#include "parameters/Constants.h"
 
 namespace Serenity {
 
@@ -45,6 +47,7 @@ _system(system),
 _basis(system->getBasisController()),
 _orbitals(system->getActiveOrbitalController<RSCF>()),
 _elstruct(system->getElectronicStructure<RSCF>()),
+_geometry(system->getGeometry()),
 _coeffs(std::make_unique<Eigen::MatrixXd>(_system->getActiveOrbitalController<RSCF>()->getCoefficients())),
 _eris(nullptr){
 }
@@ -111,7 +114,8 @@ void WriteDataTask::run() {
 
   //write orbital irreps
   OutputControl::nOut << "  Saving orbital symmetries..." << std::endl;
-  Eigen::VectorXi irreps(_nActOrbs,1);//symmetry is not implemented in serenity, thus fill with ones
+  Eigen::VectorXi irreps(_nActOrbs);
+  irreps.setOnes();//symmetry is not implemented in serenity, thus fill with ones
   HDF5::save(file, "irreps", irreps);
 
   //write orbital coefficients
@@ -123,11 +127,51 @@ void WriteDataTask::run() {
   //prepare and save MO integrals and their indices
   OutputControl::nOut << "  Saving integrals..." << std::endl;
   Eigen::VectorXd integrals;
-  Eigen::VectorXd indices;
+  Eigen::VectorXi indices;
   this->prepERIS(integrals,indices);
   HDF5::save(file, "integrals", integrals);
   HDF5::save(file, "indices", indices);
   const unsigned int nIntegrals = integrals.size();
+
+  //prepare and save AO basis
+  OutputControl::nOut << "  Saving AO basis..." << std::endl;  
+  unsigned int nShells;
+  unsigned int maxNmbCC;
+  Eigen::VectorXi ncc;
+  Eigen::VectorXd cc;
+  Eigen::VectorXd alpha;
+  Eigen::VectorXd coord;
+  Eigen::VectorXi angmom;
+  prepAOBasis(nShells,maxNmbCC,ncc,cc,alpha,coord,angmom);
+  HDF5::save_scalar_attribute(file, "nShells", nShells);
+  HDF5::save_scalar_attribute(file, "maxNmbCC", maxNmbCC);
+  HDF5::save(file, "ncc", ncc);  
+  HDF5::save(file, "cc", cc);
+  HDF5::save(file, "alpha", alpha);
+  HDF5::save(file, "angmom", angmom);
+  HDF5::save(file, "coord", coord);
+
+  //prepare and save molecular geometry
+  OutputControl::nOut << "  Saving geometry..." << std::endl;
+  unsigned int nAtoms = 0;
+  Eigen::VectorXd coords;
+  Eigen::VectorXi Zs;
+  double Enuc = 0.;
+  prepGeometry(nAtoms,coords,Zs,Enuc);
+  HDF5::save_scalar_attribute(file, "nAtoms", nAtoms);
+  HDF5::save_scalar_attribute(file, "Enuc", Enuc);
+  HDF5::save(file, "coords", coords);  
+  HDF5::save(file, "Zs", Zs);
+
+  //saving attributes
+  OutputControl::nOut << "  Saving attributes..." << std::endl;    
+  HDF5::save_scalar_attribute(file, "nSym", 1);                         //number of irreps (1 in serenity)
+  HDF5::save_scalar_attribute(file, "nCenters", _system->getNAtoms());  //number of atoms
+  HDF5::save_scalar_attribute(file, "nBasisFunc", _nBasisFunc);
+  HDF5::save_scalar_attribute(file, "nActOrbs", _nActOrbs);
+  HDF5::save_scalar_attribute(file, "nOccOrb", _nOccActOrbs);
+  HDF5::save_scalar_attribute(file, "energy", energy);
+  HDF5::save_scalar_attribute(file, "nIntegrals", nIntegrals);
 
   OutputControl::nOut << "\n" << std::endl;
   OutputControl::nOut << "  Total energy: "<<energy<< std::endl;  
@@ -135,13 +179,6 @@ void WriteDataTask::run() {
   OutputControl::nOut << "  Number of active orbitals: "<<_nActOrbs<< std::endl;
   OutputControl::nOut << "  Number of occupied orbitals: "<<_nOccActOrbs<< std::endl;
   OutputControl::nOut << "  Number of non-zero integrals: "<<nIntegrals<< std::endl;
-
-  HDF5::save_scalar_attribute(file, "nSym", 1);                         //number of irreps (1 in serenity)
-  HDF5::save_scalar_attribute(file, "nCenters", _system->getNAtoms());  //number of atoms
-  HDF5::save_scalar_attribute(file, "nBasisFunc", _nActOrbs);
-  HDF5::save_scalar_attribute(file, "nOccOrb", _nOccActOrbs);
-  HDF5::save_scalar_attribute(file, "energy", energy);
-  HDF5::save_scalar_attribute(file, "nIntegrals", nIntegrals);
 
   file.close();
 
@@ -162,7 +199,7 @@ void WriteDataTask::prepCoefficients(Eigen::VectorXd& coeffs){
   return;
 }
 
-void WriteDataTask::prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXd& indices){
+void WriteDataTask::prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXi& indices){
   if (!_eris) {
     _eris = std::unique_ptr<RegularRankFourTensor<double>>(new RegularRankFourTensor<double>(_nBasisFunc, 0.0));
   }
@@ -191,7 +228,7 @@ void WriteDataTask::prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXd& indice
   ao2mo.transformTwoElectronIntegrals(eris, eris, *_coeffs, _nBasisFunc);
 
   std::vector<double> ints;
-  std::vector<double> indx;
+  std::vector<int> indx;
 
   for (unsigned int i = _iActOrb; i < _fActOrb; ++i) {
     for (unsigned int j = i; j < _fActOrb; ++j) {
@@ -211,7 +248,102 @@ void WriteDataTask::prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXd& indice
   }
 
   integrals = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(ints.data(), ints.size());
-  indices   = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(indx.data(), indx.size());
+  indices   = Eigen::Map<Eigen::VectorXi, Eigen::Unaligned>(indx.data(), indx.size());
+
+  return;
+}
+
+void WriteDataTask::prepAOBasis(
+  unsigned int& nShells, unsigned int& maxNmbCC,
+  Eigen::VectorXi& ncc_,
+  Eigen::VectorXd& cc_,
+  Eigen::VectorXd& alpha_,
+  Eigen::VectorXd& coord_,
+  Eigen::VectorXi& angmom_)
+{
+  nShells = _basis->getReducedNBasisFunctions(); //number of atomic orbitals
+  maxNmbCC = _basis->getMaxNumberOfPrimitives(); //maximal number of contractions
+
+  const auto shells = _basis->getBasis();
+
+  std::vector<int> ncc(nShells);
+  std::vector<double> cc(nShells*maxNmbCC,0.0);
+  std::vector<double> alpha(nShells*maxNmbCC,0.0);
+  std::vector<double> coord(nShells*3);
+  std::vector<int> angmom(nShells);
+
+  for (unsigned int i = 0; i < nShells; ++i) {
+    auto shell = shells[i];
+
+    auto ncnts = shell->getNContracted();
+    auto nexps = shell->getNPrimitives();
+    auto l = shell->getAngularMomentum();
+
+    const auto exponents = shell->alpha;
+    const auto contractions = shell->contr[0].coeff;
+
+    const double x = shell->getX();
+    const double y = shell->getY();
+    const double z = shell->getZ();
+
+    //assign number of contractions
+    ncc[i] = nexps;
+
+    //assign angular momentum
+    angmom[i] = l;
+
+    //assign exponentials and contraction coefficients
+    for(size_t j=0; j<nexps; j++){
+      size_t indx = i * maxNmbCC + j;
+      cc[indx]    = contractions[j];
+      alpha[indx] = exponents[j];
+    }
+
+    //assign coordinates
+    coord[i*3    ] = x;
+    coord[i*3 + 1] = y;
+    coord[i*3 + 2] = z;
+  }
+
+  ncc_    = Eigen::Map<Eigen::VectorXi, Eigen::Unaligned>(ncc.data(), ncc.size());
+  angmom_ = Eigen::Map<Eigen::VectorXi, Eigen::Unaligned>(angmom.data(), angmom.size());
+  cc_     = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(cc.data(), cc.size());
+  alpha_  = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(alpha.data(), alpha.size());
+  coord_  = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(coord.data(), coord.size());
+
+  return;
+}
+
+void WriteDataTask::prepGeometry(
+  unsigned int& nAtoms_,
+  Eigen::VectorXd& coords_,
+  Eigen::VectorXi& Zs_,
+  double& Enuc_)
+{
+  Enuc_ = _geometry->getCoreCoreRepulsion();
+  nAtoms_ = _geometry->getNAtoms();
+
+  const auto atoms = _geometry->getAtoms();
+  
+  std::vector<double> coords(3*nAtoms_,0.0);
+  std::vector<int> Zs(nAtoms_,0);
+
+  for(size_t ia = 0; ia<nAtoms_; ia++){
+    const auto& atom = atoms[ia];
+
+    const int Z = atom->getNuclearCharge();
+    const double x = atom->getX();
+    const double y = atom->getY();
+    const double z = atom->getZ();
+
+    coords[3 * ia ]    = x;
+    coords[3 * ia + 1] = y;
+    coords[3 * ia + 2] = z;
+    Zs[ia] = Z;
+  }
+
+  coords_ = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(coords.data(), coords.size());
+  Zs_     = Eigen::Map<Eigen::VectorXi, Eigen::Unaligned>(Zs.data(), Zs.size());
 
   return;
 }

@@ -38,6 +38,7 @@ namespace Serenity {
 /* Forward declarations */
 class SystemController;
 class BasisController;
+class Geometry;
 
 struct WriteDataTaskSettings {
   WriteDataTaskSettings() : 
@@ -80,6 +81,7 @@ class WriteDataTask : public Task {
   std::shared_ptr<BasisController> _basis;
   std::shared_ptr<OrbitalController<RSCF>> _orbitals;
   std::shared_ptr<ElectronicStructure<RSCF>> _elstruct;
+  std::shared_ptr<Geometry> _geometry;
 
   std::unique_ptr<Eigen::MatrixXd> _coeffs;
   std::unique_ptr<RegularRankFourTensor<double>> _eris;
@@ -91,7 +93,17 @@ class WriteDataTask : public Task {
   unsigned int _fActOrb;      //index of final active orbital
 
   void prepCoefficients(Eigen::VectorXd& coeffs);
-  void prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXd& indices);
+  void prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXi& indices);
+  void prepAOBasis(unsigned int& nShells, unsigned int& maxNmbCC,
+                   Eigen::VectorXi& ncc_,
+                   Eigen::VectorXd& cc_,
+                   Eigen::VectorXd& alpha_,
+                   Eigen::VectorXd& coord_,
+                   Eigen::VectorXi& angmom_);
+  void prepGeometry(unsigned int& NAtoms,
+                    Eigen::VectorXd& coords,
+                    Eigen::VectorXi& Zs,
+                    double& Enuc);
 };
 
 } /* namespace Serenity */
