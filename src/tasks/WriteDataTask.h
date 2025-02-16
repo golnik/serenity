@@ -94,16 +94,20 @@ class WriteDataTask : public Task {
 
   void prepCoefficients(Eigen::VectorXd& coeffs);
   void prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXi& indices);
-  void prepAOBasis(unsigned int& nShells, unsigned int& maxNmbCC,
+  void prepAOBasis(unsigned int& nAO, unsigned int& maxNmbCC,
                    Eigen::VectorXi& ncc_,
                    Eigen::VectorXd& cc_,
                    Eigen::VectorXd& alpha_,
-                   Eigen::VectorXd& coord_,
-                   Eigen::VectorXi& angmom_);
-  void prepGeometry(unsigned int& NAtoms,
+                   Eigen::VectorXi& center_,
+                   Eigen::VectorXi& polynomial_);
+  void prepGeometry(unsigned int& nAtoms,
                     Eigen::VectorXd& coords,
-                    Eigen::VectorXi& Zs,
+                    Eigen::VectorXd& Zs,
                     double& Enuc);
+
+  unsigned int find_atom_indx(const double& x,
+                              const double& y,
+                              const double& z);
 };
 
 } /* namespace Serenity */

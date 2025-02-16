@@ -83,12 +83,12 @@ void WriteDataTask::run() {
             "SAVEDATA task: Wrong active space is requested.\n"
             "               Index of the initial or final orbitals must be lower than the size of the basis!");
       }
-      if(_iActOrb>=nOccOrb){
+      if(_iActOrb<=0 || _iActOrb>=nOccOrb){
           throw SerenityError(
             "SAVEDATA task: Wrong active space is requested.\n"
             "               Index of the initial orbital must be in the occupied space!");
       }
-      if(_fActOrb<=nOccOrb){
+      if(_fActOrb<=nOccOrb || _fActOrb>_nBasisFunc){
           throw SerenityError(
             "SAVEDATA task: Wrong active space is requested.\n"
             "               Index of the final orbital must be in the virtual space!");
@@ -140,21 +140,21 @@ void WriteDataTask::run() {
 
   //prepare and save AO basis
   OutputControl::nOut << "  Saving AO basis..." << std::endl;  
-  unsigned int nShells;
+  unsigned int nAO;
   unsigned int maxNmbCC;
   Eigen::VectorXi ncc;
   Eigen::VectorXd cc;
   Eigen::VectorXd alpha;
-  Eigen::VectorXd coord;
-  Eigen::VectorXi angmom;
-  prepAOBasis(nShells,maxNmbCC,ncc,cc,alpha,coord,angmom);
-  HDF5::save_scalar_attribute(file, "nShells", nShells);
+  Eigen::VectorXi center;
+  Eigen::VectorXi polynomial;
+  prepAOBasis(nAO,maxNmbCC,ncc,cc,alpha,center,polynomial);
+  HDF5::save_scalar_attribute(file, "nAO", nAO);
   HDF5::save_scalar_attribute(file, "maxNmbCC", maxNmbCC);
   HDF5::save(file, "ncc", ncc);  
   HDF5::save(file, "cc", cc);
   HDF5::save(file, "alpha", alpha);
-  HDF5::save(file, "angmom", angmom);
-  HDF5::save(file, "coord", coord);
+  HDF5::save(file, "center", center);
+  HDF5::save(file, "polynomial", polynomial);
 
   //prepare and save AO overlap matrix
   Eigen::MatrixXd sAO = _system->getOneElectronIntegralController()->getOverlapIntegrals();
@@ -166,12 +166,12 @@ void WriteDataTask::run() {
   OutputControl::nOut << "  Saving geometry..." << std::endl;
   unsigned int nAtoms = 0;
   Eigen::VectorXd coords;
-  Eigen::VectorXi Zs;
+  Eigen::VectorXd Zs;
   double Enuc = 0.;
   prepGeometry(nAtoms,coords,Zs,Enuc);
   HDF5::save_scalar_attribute(file, "nAtoms", nAtoms);
   HDF5::save_scalar_attribute(file, "Enuc", Enuc);
-  HDF5::save(file, "coords", coords);  
+  HDF5::save(file, "geometry", coords);  
   HDF5::save(file, "Zs", Zs);
 
   //saving attributes
@@ -264,25 +264,60 @@ void WriteDataTask::prepERIS(Eigen::VectorXd& integrals, Eigen::VectorXi& indice
   return;
 }
 
+//find to what atom a given shell belongs
+unsigned int WriteDataTask::find_atom_indx(const double& x,
+                                           const double& y,
+                                           const double& z){
+
+  unsigned int nAtoms = _geometry->getNAtoms();
+
+  const auto atoms = _geometry->getAtoms();
+
+  unsigned int ia = 0;
+  for(ia = 0; ia<nAtoms; ia++){
+    const auto& atom = atoms[ia];
+
+    const double xa = atom->getX();
+    const double ya = atom->getY();
+    const double za = atom->getZ();
+
+    double dist = sqrt((x-xa)*(x-xa) + (y-ya)*(y-ya) + (z-za)*(z-za));
+
+    if(dist<1.E-5)
+      break;
+  }
+
+  return ia;
+}
+
 void WriteDataTask::prepAOBasis(
-  unsigned int& nShells, unsigned int& maxNmbCC,
+  unsigned int& nAO, unsigned int& maxNmbCC,
   Eigen::VectorXi& ncc_,
   Eigen::VectorXd& cc_,
   Eigen::VectorXd& alpha_,
-  Eigen::VectorXd& coord_,
-  Eigen::VectorXi& angmom_)
+  Eigen::VectorXi& center_,
+  Eigen::VectorXi& polynomial_)
 {
-  nShells = _basis->getReducedNBasisFunctions(); //number of atomic orbitals
+  size_t nShells = _basis->getReducedNBasisFunctions(); //number of atomic orbitals
   maxNmbCC = _basis->getMaxNumberOfPrimitives(); //maximal number of contractions
 
   const auto shells = _basis->getBasis();
 
-  std::vector<int> ncc(nShells);
-  std::vector<double> cc(nShells*maxNmbCC,0.0);
-  std::vector<double> alpha(nShells*maxNmbCC,0.0);
-  std::vector<double> coord(nShells*3);
-  std::vector<int> angmom(nShells);
+  //calculate number of AO
+  nAO = 0;
+  for(size_t i=0; i<nShells; i++){
+      auto shell = shells[i];
+      auto l = shell->getAngularMomentum();
+      nAO += N_SHELL_CART[l];
+  }
 
+  std::vector<int> ncc(nAO);
+  std::vector<double> cc(nAO*maxNmbCC,0.0);
+  std::vector<double> alpha(nAO*maxNmbCC,0.0);
+  std::vector<int> center(nAO);
+  std::vector<int> polynomial(nAO*3);
+
+  size_t indx = 0;
   for (unsigned int i = 0; i < nShells; ++i) {
     auto shell = shells[i];
 
@@ -290,37 +325,56 @@ void WriteDataTask::prepAOBasis(
     auto nexps = shell->getNPrimitives();
     auto l = shell->getAngularMomentum();
 
+    //extract exponents and contraction coefficients for the given shell
     const auto exponents = shell->alpha;
     const auto contractions = shell->contr[0].coeff;
 
+    //coordinates of the shell
     const double x = shell->getX();
     const double y = shell->getY();
     const double z = shell->getZ();
 
-    //assign number of contractions
-    ncc[i] = nexps;
+    //find to which atom the shell belongs
+    auto atom_indx = find_atom_indx(x,y,z);
 
-    //assign angular momentum
-    angmom[i] = l;
+    //generate various l projections
+    for (int aX = l; aX >= 0; --aX) {
+      for (int aY = l - aX; aY >= 0; --aY) {
+        int aZ = l - aY - aX;
 
-    //assign exponentials and contraction coefficients
-    for(size_t j=0; j<nexps; j++){
-      size_t indx = i * maxNmbCC + j;
-      cc[indx]    = contractions[j];
-      alpha[indx] = exponents[j];
+        //assign values of the polynomial
+        polynomial[3*indx    ] = aX;
+        polynomial[3*indx + 1] = aY;
+        polynomial[3*indx + 2] = aZ;
+
+        //assign number of contractions and atom index
+        ncc[indx] = nexps;
+        center[indx] = atom_indx + 1;
+
+        //normalize the AO
+        long double norm = 
+            std::pow(
+                (long double)(double_factorial(2 * aX - 1)) 
+              * (long double)(double_factorial(2 * aY - 1)) 
+              * (long double)(double_factorial(2 * aZ - 1)),-0.5)
+          * std::pow(double_factorial(2 * l - 1), 0.5);
+
+        //assign exponentials and contraction coefficients
+        for(size_t icc=0; icc<nexps; icc++){
+            cc   [indx*maxNmbCC + icc] = norm * contractions[icc];
+            alpha[indx*maxNmbCC + icc] = exponents[icc];
+        }
+
+        indx++;
+      }
     }
-
-    //assign coordinates
-    coord[i*3    ] = x;
-    coord[i*3 + 1] = y;
-    coord[i*3 + 2] = z;
   }
 
   ncc_    = Eigen::Map<Eigen::VectorXi, Eigen::Unaligned>(ncc.data(), ncc.size());
-  angmom_ = Eigen::Map<Eigen::VectorXi, Eigen::Unaligned>(angmom.data(), angmom.size());
   cc_     = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(cc.data(), cc.size());
   alpha_  = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(alpha.data(), alpha.size());
-  coord_  = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(coord.data(), coord.size());
+  center_ = Eigen::Map<Eigen::VectorXi, Eigen::Unaligned>(center.data(), center.size());
+  polynomial_ = Eigen::Map<Eigen::VectorXi, Eigen::Unaligned>(polynomial.data(), polynomial.size());
 
   return;
 }
@@ -328,7 +382,7 @@ void WriteDataTask::prepAOBasis(
 void WriteDataTask::prepGeometry(
   unsigned int& nAtoms_,
   Eigen::VectorXd& coords_,
-  Eigen::VectorXi& Zs_,
+  Eigen::VectorXd& Zs_,
   double& Enuc_)
 {
   Enuc_ = _geometry->getCoreCoreRepulsion();
@@ -337,7 +391,7 @@ void WriteDataTask::prepGeometry(
   const auto atoms = _geometry->getAtoms();
   
   std::vector<double> coords(3*nAtoms_,0.0);
-  std::vector<int> Zs(nAtoms_,0);
+  std::vector<double> Zs(nAtoms_,0.0);
 
   for(size_t ia = 0; ia<nAtoms_; ia++){
     const auto& atom = atoms[ia];
@@ -350,11 +404,11 @@ void WriteDataTask::prepGeometry(
     coords[3 * ia ]    = x;
     coords[3 * ia + 1] = y;
     coords[3 * ia + 2] = z;
-    Zs[ia] = Z;
+    Zs[ia] = (double)Z;
   }
 
   coords_ = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(coords.data(), coords.size());
-  Zs_     = Eigen::Map<Eigen::VectorXi, Eigen::Unaligned>(Zs.data(), Zs.size());
+  Zs_     = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(Zs.data(), Zs.size());
 
   return;
 }
