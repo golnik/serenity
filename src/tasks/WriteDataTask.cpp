@@ -34,11 +34,14 @@
 #include "data/matrices/CoefficientMatrix.h"
 #include "integrals/looper/TwoElecFourCenterIntLooper.h"
 #include "integrals/transformer/Ao2MoTransformer.h"
+#include "integrals/OneElectronIntegralController.h"
 #include "io/FormattedOutput.h"
 #include "math/RegularRankFourTensor.h"
 #include "system/SystemController.h"
 #include "geometry/Geometry.h"
 #include "parameters/Constants.h"
+
+#include "basis/CartesianToSphericalTransformer.h"
 
 namespace Serenity {
 
@@ -63,38 +66,40 @@ void WriteDataTask::run() {
   //default active space settings
   _nActOrbs = _nBasisFunc;
   _iActOrb = 0;
-  _fActOrb = _nBasisFunc-1;
+  _fActOrb = _nBasisFunc;//-1;
   _nOccActOrbs = nOccOrb;
 
-  if(!settings.activeOrbs.empty() && settings.activeOrbs.size() == 2){//initial and final orbitals are specified
-    _iActOrb = settings.activeOrbs[0]-1;
-    _fActOrb = settings.activeOrbs[1]-1;
-    if(_iActOrb>=_fActOrb){
-      throw SerenityError(
-        "SAVEDATA task: Wrong active space is requested.\n"
-        "               Index of the initial orbital must be lower than that of the final orbital!");
-    }
-    if(_iActOrb>=_nBasisFunc || _fActOrb>=_nBasisFunc){
+  if(!settings.activeOrbs.empty()){
+    if(settings.activeOrbs.size() == 2){//initial and final orbitals are specified
+      _iActOrb = settings.activeOrbs[0]-1;
+      _fActOrb = settings.activeOrbs[1];//-1;
+      if(_iActOrb>=_fActOrb){
         throw SerenityError(
           "SAVEDATA task: Wrong active space is requested.\n"
-          "               Index of the initial or final orbitals must be lower than the size of the basis!");
+          "               Index of the initial orbital must be lower than that of the final orbital!");
+      }
+      if(_iActOrb>=_nBasisFunc || _fActOrb>_nBasisFunc){
+          throw SerenityError(
+            "SAVEDATA task: Wrong active space is requested.\n"
+            "               Index of the initial or final orbitals must be lower than the size of the basis!");
+      }
+      if(_iActOrb>=nOccOrb){
+          throw SerenityError(
+            "SAVEDATA task: Wrong active space is requested.\n"
+            "               Index of the initial orbital must be in the occupied space!");
+      }
+      if(_fActOrb<=nOccOrb){
+          throw SerenityError(
+            "SAVEDATA task: Wrong active space is requested.\n"
+            "               Index of the final orbital must be in the virtual space!");
+      }    
+      _nActOrbs = _fActOrb - _iActOrb;
+      _nOccActOrbs = nOccOrb - _iActOrb;
     }
-    if(_iActOrb>=nOccOrb){
-        throw SerenityError(
-          "SAVEDATA task: Wrong active space is requested.\n"
-          "               Index of the initial orbital must be in the occupied space!");
-    }
-    if(_fActOrb<=nOccOrb){
-        throw SerenityError(
-          "SAVEDATA task: Wrong active space is requested.\n"
-          "               Index of the final orbital must be in the virtual space!");
-    }    
-    _nActOrbs = _fActOrb - _iActOrb + 1;
-    _nOccActOrbs = nOccOrb - _iActOrb;
+    else{
+      throw SerenityError("SAVEDATA task: Wrong syntax in activeOrbs keyword. Use {i f}.");
+    }  
   }
-  else{
-    throw SerenityError("SAVEDATA task: Wrong syntax in activeOrbs keyword. Use {i f}.");
-  }  
 
   //const std::string baseName = "data";
   //const std::string fileName = _system->getSystemName() + "." + baseName + ".hdf5";
@@ -151,6 +156,12 @@ void WriteDataTask::run() {
   HDF5::save(file, "angmom", angmom);
   HDF5::save(file, "coord", coord);
 
+  //prepare and save AO overlap matrix
+  Eigen::MatrixXd sAO = _system->getOneElectronIntegralController()->getOverlapIntegrals();
+  std::cout<<"Size: "<<sAO.cols()<<" "<<sAO.rows()<<std::endl;
+  Eigen::VectorXd sAO_data(Eigen::Map<Eigen::VectorXd>(sAO.data(), sAO.cols()*sAO.rows()));
+  HDF5::save(file, "sAO", sAO_data);
+
   //prepare and save molecular geometry
   OutputControl::nOut << "  Saving geometry..." << std::endl;
   unsigned int nAtoms = 0;
@@ -175,7 +186,7 @@ void WriteDataTask::run() {
 
   OutputControl::nOut << "\n" << std::endl;
   OutputControl::nOut << "  Total energy: "<<energy<< std::endl;  
-  OutputControl::nOut << "  Active orbitals: "<<_iActOrb+1<<"..."<<_fActOrb+1<< std::endl;
+  OutputControl::nOut << "  Active orbitals: "<<_iActOrb+1<<"..."<<_fActOrb<< std::endl;
   OutputControl::nOut << "  Number of active orbitals: "<<_nActOrbs<< std::endl;
   OutputControl::nOut << "  Number of occupied orbitals: "<<_nOccActOrbs<< std::endl;
   OutputControl::nOut << "  Number of non-zero integrals: "<<nIntegrals<< std::endl;
@@ -193,7 +204,7 @@ void WriteDataTask::prepCoefficients(Eigen::VectorXd& coeffs){
   for (unsigned int i = _iActOrb; i < _fActOrb; ++i) {
     for (unsigned int j = 0; j < _nBasisFunc; ++j) {
       unsigned int i_ = i - _iActOrb; //shifted orbital index to account for active space selection
-      coeffs(i_ * _nBasisFunc + j) = (*_coeffs)(i,j);
+      coeffs(i_ * _nBasisFunc + j) = (*_coeffs)(j,i);   //we reverse the indices to match theADCcode convention
     }
   }
   return;
