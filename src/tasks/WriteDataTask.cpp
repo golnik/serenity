@@ -115,7 +115,13 @@ void WriteDataTask::run() {
   //write orbital energies
   OutputControl::nOut << "  Saving orbital energies..." << std::endl;
   const auto& orbitalEnergies = _orbitals->getEigenvalues();
-  HDF5::save(file, "energies", orbitalEnergies.segment(_iActOrb,_fActOrb));
+  //bug fixed: syntax of .segment(i,n): Block containing n elements, starting at position i 
+  HDF5::save(file, "energies", orbitalEnergies.segment(_iActOrb,_nActOrbs));
+
+  //write orbital occupations
+  OutputControl::nOut << "  Saving orbital occupations..." << std::endl;
+  const auto& occs = _elstruct->getDensityMatrixController()->getOccupations();
+  HDF5::save(file, "occs", occs.segment(_iActOrb,_nActOrbs));
 
   //write orbital irreps
   OutputControl::nOut << "  Saving orbital symmetries..." << std::endl;
