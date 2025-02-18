@@ -145,7 +145,7 @@ void WriteDataTask::run() {
   const unsigned int nIntegrals = integrals.size();
 
   //prepare and save AO basis
-  OutputControl::nOut << "  Saving AO basis..." << std::endl;  
+  OutputControl::nOut << "  Saving AO basis..." << std::endl;
   unsigned int nAO;
   unsigned int maxNmbCC;
   Eigen::VectorXi ncc;
@@ -163,10 +163,22 @@ void WriteDataTask::run() {
   HDF5::save(file, "polynomial", polynomial);
 
   //prepare and save AO overlap matrix
+  OutputControl::nOut << "  Saving overlap matrix..." << std::endl;
   Eigen::MatrixXd sAO = _system->getOneElectronIntegralController()->getOverlapIntegrals();
-  std::cout<<"Size: "<<sAO.cols()<<" "<<sAO.rows()<<std::endl;
   Eigen::VectorXd sAO_data(Eigen::Map<Eigen::VectorXd>(sAO.data(), sAO.cols()*sAO.rows()));
   HDF5::save(file, "sAO", sAO_data);
+
+  //prepare and save dipole matrices
+  OutputControl::nOut << "  Saving dipole matrices..." << std::endl;
+  const auto& dips = _system->getOneElectronIntegralController()->getDipoleLengths();
+  std::string xyz[3] = {"x","y","z"};
+  for(size_t dir = 0; dir<3; dir++){
+    Eigen::MatrixXd mat = dips[dir];
+    Eigen::VectorXd mat_data(Eigen::Map<Eigen::VectorXd>(mat.data(), mat.cols()*mat.rows()));
+    std::string name = "dip_" + xyz[dir];
+    OutputControl::nOut << "  "<< name << std::endl;
+    HDF5::save(file, name, mat_data);
+  }
 
   //prepare and save molecular geometry
   OutputControl::nOut << "  Saving geometry..." << std::endl;
