@@ -83,7 +83,7 @@ void WriteDataTask::run() {
             "SAVEDATA task: Wrong active space is requested.\n"
             "               Index of the initial or final orbitals must be lower than the size of the basis!");
       }
-      if(_iActOrb<=0 || _iActOrb>=nOccOrb){
+      if(_iActOrb<0 || _iActOrb>=nOccOrb){
           throw SerenityError(
             "SAVEDATA task: Wrong active space is requested.\n"
             "               Index of the initial orbital must be in the occupied space!");
